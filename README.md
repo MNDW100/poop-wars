@@ -1,6 +1,6 @@
 # 푸프 워즈 (Poop Wars)
 
-[🎮 게임 바로가기](https://mndw100.github.io/poop-wars/)
+[푸프 워즈](https://mndw100.github.io/poop-wars/)
 
 브라우저에서 바로 플레이할 수 있는 단일 HTML 게임입니다. 별도 빌드나 외부 라이브러리가 필요하지 않습니다.
 
