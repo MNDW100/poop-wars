@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>푸프 워즈 (Poop Wars)</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#12101c;font-family:system-ui,sans-serif}
+canvas{display:block;width:100%;height:100%;cursor:crosshair}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+const MAP = 2400, T = 20, N = MAP / T, GAME_TIME = 180;
+const PINK = '#FF4D8D', MINT = '#00E5A8';
+const TCOL = [null, PINK, MINT], TFILL = [null, 'rgba(255,77,141,.5)', 'rgba(0,229,168,.5)'];
+const MMCOL = [null, '#FF4D8D', '#00E5A8'];
+const GAP = 16, HEAD_R = 13, BASE_SPEED = 160, TURN = 4.5;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+// ---------- Grid + offscreen layers ----------
+const floor = document.createElement('canvas'); floor.width = floor.height = MAP;
+const fctx = floor.getContext('2d');
+const mm = document.createElement('canvas'); mm.width = mm.height = N;
+const mctx = mm.getContext('2d');
+let grid, counts;
+
+function resetGrid() {
+  grid = Array.from({ length: N }, () => new Uint8Array(N));
+  counts = [N * N, 0, 0];
+  fctx.clearRect(0, 0, MAP, MAP); mctx.clearRect(0, 0, N, N);
+}
+function paintTile(x, y, team) {
+  if (x < 0 || y < 0 || x >= N || y >= N) return;
+  const prev = grid[x][y];
+  if (prev === team) return;
+  grid[x][y] = team; counts[prev]--; counts[team]++;
+  fctx.clearRect(x * T, y * T, T, T);
+  fctx.fillStyle = TFILL[team]; fctx.fillRect(x * T, y * T, T, T);
+  mctx.clearRect(x, y, 1, 1);
+  mctx.fillStyle = MMCOL[team]; mctx.fillRect(x, y, 1, 1);
+}
+function paintArea(px, py, team, r) { // (2r+1)x(2r+1) tiles
+  const cx = Math.floor(px / T), cy = Math.floor(py / T);
+  for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) paintTile(cx + i, cy + j, team);
+}
+function tileAt(x, y) {
+  const gx = Math.min(N - 1, Math.max(0, Math.floor(x / T))), gy = Math.min(N - 1, Math.max(0, Math.floor(y / T)));
+  return grid[gx][gy];
+}
+
+// ---------- Entity ----------
+const BASES = [null, { x: 300, y: 300 }, { x: 2100, y: 2100 }];
+class Entity {
+  constructor(team, isBot, name) {
+    this.team = team; this.isBot = isBot; this.name = name;
+    this.score = 0; this.respawn = 0; this.spawn();
+  }
+  spawn() {
+    const b = BASES[this.team];
+    this.x = b.x + (Math.random() - .5) * 300; this.y = b.y + (Math.random() - .5) * 300;
+    this.angle = Math.atan2(1200 - this.y, 1200 - this.x);
+    this.length = 8; this.gauge = 60; this.alive = true; this.boosting = false;
+    this.pathHistory = [{ x: this.x, y: this.y }]; this.segments = [];
+    this.tx = this.x; this.ty = this.y; this.think = 0; this.botBoost = false; this.speed = BASE_SPEED;
+    for (let i = 1; i <= this.length * 6; i++) // initial trail behind head
+      this.pathHistory.push({ x: this.x - Math.cos(this.angle) * i * 3, y: this.y - Math.sin(this.angle) * i * 3 });
+    this.rebuild();
+  }
+  rebuild() {
+    const p = this.pathHistory, s = this.segments; s.length = 0;
+    let acc = 0, next = GAP, i = 1;
+    for (; i < p.length && s.length < this.length; i++) {
+      acc += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y);
+      if (acc >= next) { s.push(p[i]); next += GAP; }
+    }
+    if (s.length >= this.length) p.length = Math.min(p.length, i + 2);
+  }
+  tail() { return this.segments.length ? this.segments[this.segments.length - 1] : this; }
+  die() {
+    this.alive = false; this.respawn = 7;
+    for (let i = 0; i < this.segments.length; i += 2) {
+      if (foods.length > 320) break;
+      const s = this.segments[i]; foods.push(makeFood(s.x, s.y, 0));
+    }
+  }
+  update(dt, input) {
+    // steering
+    let target;
+    if (this.isBot) { this.botAI(dt); target = Math.atan2(this.ty - this.y, this.tx - this.x); this.boosting = this.botBoost && this.gauge > 0; }
+    else { target = Math.atan2(input.wy - this.y, input.wx - this.x); this.boosting = input.down && this.gauge > 0; }
+    let d = target - this.angle; d = Math.atan2(Math.sin(d), Math.cos(d));
+    const m = TURN * dt; this.angle += Math.max(-m, Math.min(m, d));
+    // terrain
+    const t = tileAt(this.x, this.y), own = t === this.team, enemy = t !== 0 && !own;
+    let sp = BASE_SPEED * (own ? 1.25 : enemy ? 0.7 : 1);
+    if (this.boosting) { sp *= 1.5; this.gauge -= 20 * (enemy ? 1.5 : 1) * dt; if (this.gauge <= 0) { this.gauge = 0; this.boosting = false; } }
+    else if (own) this.gauge = Math.min(100, this.gauge + 15 * dt);
+    this.speed = sp;
+    // move
+    this.x += Math.cos(this.angle) * sp * dt; this.y += Math.sin(this.angle) * sp * dt;
+    this.x = Math.max(HEAD_R, Math.min(MAP - HEAD_R, this.x)); this.y = Math.max(HEAD_R, Math.min(MAP - HEAD_R, this.y));
+    const p0 = this.pathHistory[0];
+    if (Math.hypot(this.x - p0.x, this.y - p0.y) >= 3) this.pathHistory.unshift({ x: this.x, y: this.y });
+    this.rebuild();
+    // painting: tail leaves a 1-tile trail, boost paints 3x3
+    const tl = this.tail(); paintArea(tl.x, tl.y, this.team, this.boosting ? 1 : 0);
+  }
+  botAI(dt) {
+    this.think -= dt;
+    if (this.think <= 0) {
+      this.think = 0.25 + Math.random() * 0.25;
+      let best = null, bd = 450 * 450;
+      for (const f of foods) { const dd = (f.x - this.x) ** 2 + (f.y - this.y) ** 2; if (dd < bd) { bd = dd; best = f; } }
+      if (best) { this.tx = best.x; this.ty = best.y; }
+      else if (Math.hypot(this.tx - this.x, this.ty - this.y) < 80 || Math.random() < .2) { this.tx = 100 + Math.random() * 2200; this.ty = 100 + Math.random() * 2200; }
+      this.botBoost = this.botBoost ? this.gauge > 15 : (this.gauge > 70 && Math.random() < .3);
+    }
+    // avoid enemy bodies / walls
+    const ax = this.x + Math.cos(this.angle) * 80, ay = this.y + Math.sin(this.angle) * 80;
+    for (const e of entities) {
+      if (!e.alive || e.team === this.team) continue;
+      for (const s of e.segments) if ((s.x - ax) ** 2 + (s.y - ay) ** 2 < 55 * 55) {
+        const a = Math.atan2(s.y - this.y, s.x - this.x) + (Math.random() < .5 ? 2.2 : -2.2);
+        this.tx = this.x + Math.cos(a) * 200; this.ty = this.y + Math.sin(a) * 200; this.think = 0.3; return;
+      }
+    }
+    if (ax < 60 || ay < 60 || ax > MAP - 60 || ay > MAP - 60) { this.tx = 1200; this.ty = 1200; this.think = 0.4; }
+  }
+}
+
+// ---------- Food ----------
+const FOOD_TYPES = [
+  { e: '🍎', grow: 1, gauge: 12 }, { e: '🌽', grow: 2, gauge: 20 },
+  { e: '🍇', grow: 1, gauge: 15 }, { e: '🍓', grow: 1, gauge: 10 }
+];
+let foods = [];
+function makeFood(x, y, t) { const ty = t === undefined ? Math.floor(Math.random() * 4) : t; return { x, y, ty, ...FOOD_TYPES[ty] }; }
+function spawnFood() { foods.push(makeFood(40 + Math.random() * (MAP - 80), 40 + Math.random() * (MAP - 80))); }
+
+// ---------- State ----------
+let entities = [], player, timeLeft, over, winner;
+const input = { x: 0, y: 0, wx: 0, wy: 0, down: false };
+const cam = { x: 0, y: 0 };
+function init() {
+  resetGrid(); foods = []; for (let i = 0; i < 180; i++) spawnFood();
+  entities = [];
+  player = new Entity(1, false, 'YOU'); entities.push(player);
+  for (let i = 0; i < 4; i++) entities.push(new Entity(1, true, 'P' + i));
+  for (let i = 0; i < 5; i++) entities.push(new Entity(2, true, 'M' + i));
+  paintArea(BASES[1].x, BASES[1].y, 1, 5); paintArea(BASES[2].x, BASES[2].y, 2, 5);
+  timeLeft = GAME_TIME; over = false;
+}
+addEventListener('mousemove', e => { input.x = e.clientX; input.y = e.clientY; });
+addEventListener('mousedown', e => { if (over && timeLeft <= 0 && e.button === 0) { init(); return; } if (e.button === 0) input.down = true; });
+addEventListener('mouseup', e => { if (e.button === 0) input.down = false; });
+addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('keydown', e => {
+  if (e.code !== 'Space') return;
+  e.preventDefault();
+  if (e.repeat || over || !player.alive) return;
+  player.length = Math.max(3, Math.floor(player.length / 2)); // 스페이스: 길이 절반
+});
+
+// ---------- Update ----------
+function update(dt) {
+  if (over) return;
+  timeLeft -= dt;
+  if (timeLeft <= 0) { timeLeft = 0; over = true; winner = counts[1] === counts[2] ? 0 : counts[1] > counts[2] ? 1 : 2; return; }
+  input.wx = input.x + cam.x; input.wy = input.y + cam.y;
+  for (const e of entities) {
+    if (!e.alive) { e.respawn -= dt; if (e.respawn <= 0) e.spawn(); continue; }
+    e.update(dt, input);
+    for (let i = foods.length - 1; i >= 0; i--) { // eat
+      const f = foods[i];
+      if ((f.x - e.x) ** 2 + (f.y - e.y) ** 2 < (HEAD_R + 12) ** 2) {
+        foods.splice(i, 1); e.length = Math.min(70, e.length + f.grow); e.gauge = Math.min(100, e.gauge + f.gauge); e.score++;
+      }
+    }
+  }
+  while (foods.length < 180) spawnFood();
+  // collisions: head vs enemy segments only; head-head kills both
+  const dead = new Set();
+  for (const a of entities) {
+    if (!a.alive) continue;
+    for (const b of entities) {
+      if (b.team === a.team || !b.alive) continue;
+      if (Math.hypot(a.x - b.x, a.y - b.y) < HEAD_R * 2) { dead.add(a); dead.add(b); continue; }
+      for (const s of b.segments) if ((s.x - a.x) ** 2 + (s.y - a.y) ** 2 < (HEAD_R + 9) ** 2) { dead.add(a); break; }
+    }
+  }
+  dead.forEach(e => e.die());
+}
+
+// ---------- Render ----------
+function drawEntity(e) {
+  const c = TCOL[e.team], n = e.segments.length;
+  ctx.shadowColor = c; ctx.shadowBlur = e.boosting ? 22 : 10; ctx.fillStyle = c;
+  for (let i = n - 1; i >= 0; i--) {
+    const s = e.segments[i], r = 12 - 4 * (i / Math.max(1, n));
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 6.2832); ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(e.x, e.y, HEAD_R, 0, 6.2832); ctx.fill();
+  ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,.35)';
+  for (let i = n - 1; i >= 0; i -= 1) { const s = e.segments[i]; ctx.beginPath(); ctx.arc(s.x - 3, s.y - 3, 3, 0, 6.2832); ctx.fill(); }
+  ctx.beginPath(); ctx.arc(e.x - 4, e.y - 4, 4.5, 0, 6.2832); ctx.fill();
+  const ca = Math.cos(e.angle), sa = Math.sin(e.angle);
+  for (const k of [-1, 1]) { // eyes
+    const ex = e.x + ca * 5 - sa * 6 * k, ey = e.y + sa * 5 + ca * 6 * k;
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, 4, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(ex + ca * 1.5, ey + sa * 1.5, 2, 0, 6.2832); ctx.fill();
+  }
+  if (e === player) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(e.x, e.y, HEAD_R + 4, 0, 6.2832); ctx.stroke(); }
+}
+let specT = null;
+function focusTarget() {
+  if (player.alive) { specT = null; return player; }
+  if (!specT || !specT.alive || specT.team !== player.team) specT = entities.find(e => e.alive && e.team === player.team && e !== player) || player;
+  return specT;
+}
+function render() {
+  ctx.fillStyle = '#1a1730'; ctx.fillRect(0, 0, W, H);
+  const fo = focusTarget();
+  cam.x = Math.max(0, Math.min(MAP - W, fo.x - W / 2)); cam.y = Math.max(0, Math.min(MAP - H, fo.y - H / 2));
+  if (W > MAP) cam.x = (MAP - W) / 2; if (H > MAP) cam.y = (MAP - H) / 2;
+  ctx.save(); ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
+  ctx.fillStyle = '#221f3d'; ctx.fillRect(0, 0, MAP, MAP);
+  // floor: one drawImage of the visible region
+  const sx = Math.max(0, cam.x), sy = Math.max(0, cam.y), sw = Math.min(MAP - sx, W), sh = Math.min(MAP - sy, H);
+  ctx.drawImage(floor, sx, sy, sw, sh, sx, sy, sw, sh);
+  ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = Math.floor(sx / 100) * 100; x <= sx + sw; x += 100) { ctx.moveTo(x, sy); ctx.lineTo(x, sy + sh); }
+  for (let y = Math.floor(sy / 100) * 100; y <= sy + sh; y += 100) { ctx.moveTo(sx, y); ctx.lineTo(sx + sw, y); }
+  ctx.stroke();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeRect(0, 0, MAP, MAP);
+  ctx.font = '20px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const f of foods) if (f.x > cam.x - 30 && f.x < cam.x + W + 30 && f.y > cam.y - 30 && f.y < cam.y + H + 30) ctx.fillText(f.e, f.x, f.y);
+  for (const e of entities) if (e.alive && e.x > cam.x - 400 && e.x < cam.x + W + 400 && e.y > cam.y - 400 && e.y < cam.y + H + 400) drawEntity(e);
+  ctx.restore();
+  if (!player.alive && !over) { ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(0, 0, W, H); }
+  drawUI();
+}
+function drawUI() {
+  const tot = N * N, p1 = counts[1] / tot * 100, p2 = counts[2] / tot * 100;
+  const bw = Math.min(520, W - 40), bx = (W - bw) / 2, by = 12;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(bx, by, bw, 26);
+  ctx.fillStyle = PINK; ctx.fillRect(bx, by, bw * p1 / 100, 26);
+  ctx.fillStyle = MINT; ctx.fillRect(bx + bw - bw * p2 / 100, by, bw * p2 / 100, 26);
+  ctx.font = 'bold 15px system-ui'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#111';
+  ctx.textAlign = 'left'; ctx.fillText('PINK ' + p1.toFixed(1) + '%', bx + 8, by + 14);
+  ctx.textAlign = 'right'; ctx.fillText(p2.toFixed(1) + '% MINT', bx + bw - 8, by + 14);
+  const m = Math.floor(timeLeft / 60), s = Math.floor(timeLeft % 60);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui';
+  ctx.fillText(m + ':' + String(s).padStart(2, '0'), W / 2, by + 46);
+  if (!player.alive && !over) {
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui';
+    ctx.fillText('부활까지 ' + Math.ceil(player.respawn) + '초', W / 2, H / 2 - 20);
+    ctx.font = '16px system-ui'; ctx.fillText('팀원 시점으로 관전 중', W / 2, H / 2 + 14);
+  }
+  // gauge
+  const gx = 20, gy = H - 50, gw = 220;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(gx, gy, gw, 22);
+  ctx.fillStyle = player.gauge > 25 ? '#ffd23f' : '#ff6b6b'; ctx.fillRect(gx, gy, gw * player.gauge / 100, 22);
+  ctx.font = 'bold 13px system-ui'; ctx.fillStyle = '#111'; ctx.textAlign = 'left';
+  ctx.fillText('배변 게이지 ' + Math.round(player.gauge) + '%', gx + 8, gy + 12);
+  const t = tileAt(player.x, player.y);
+  ctx.fillStyle = '#fff'; ctx.font = '13px system-ui';
+  ctx.fillText(t === player.team ? '▲ 아군 땅: 속도+25%, 게이지 회복' : t ? '▼ 적 땅: 속도-30%, 게이지 1.5배 소모' : '중립 지대', gx, gy - 10);
+  ctx.fillText('길이 ' + player.length + ' · 먹이 ' + player.score + (player.alive ? '' : ' · 부활 대기...'), gx, gy - 28);
+  // minimap
+  const ms = Math.min(170, W * .3), mx = W - ms - 16, my = H - ms - 16;
+  ctx.fillStyle = 'rgba(10,8,20,.7)'; ctx.fillRect(mx - 3, my - 3, ms + 6, ms + 6);
+  ctx.imageSmoothingEnabled = false; ctx.drawImage(mm, mx, my, ms, ms); ctx.imageSmoothingEnabled = true;
+  const k = ms / MAP;
+  for (const e of entities) if (e.alive) { ctx.fillStyle = TCOL[e.team]; ctx.strokeStyle = '#fff'; ctx.lineWidth = e === player ? 2 : 0; ctx.beginPath(); ctx.arc(mx + e.x * k, my + e.y * k, e === player ? 4 : 2.5, 0, 6.2832); ctx.fill(); if (e === player) ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1; ctx.strokeRect(mx + cam.x * k, my + cam.y * k, Math.min(W, MAP) * k, Math.min(H, MAP) * k);
+  if (over) {
+    ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.font = 'bold 48px system-ui';
+    ctx.fillStyle = winner === 1 ? PINK : winner === 2 ? MINT : '#fff';
+    ctx.fillText(winner === 0 ? '무승부!' : (winner === 1 ? '핑크팀' : '민트팀') + ' 승리!', W / 2, H / 2 - 20);
+    ctx.fillStyle = '#fff'; ctx.font = '20px system-ui'; ctx.fillText('클릭하면 다시 시작', W / 2, H / 2 + 30);
+  }
+}
+
+// ---------- Loop ----------
+init();
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); render(); requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
