@@ -7,10 +7,14 @@
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#12101c;font-family:system-ui,sans-serif}
 canvas{display:block;width:100%;height:100%;cursor:crosshair}
+#playLink{position:fixed;right:16px;bottom:16px;z-index:2;padding:10px 14px;border:1px solid rgba(0,229,168,.55);border-radius:999px;background:rgba(18,16,28,.82);color:#bffff0;font:600 13px system-ui,sans-serif;text-decoration:none;backdrop-filter:blur(8px)}
+#playLink:hover{background:rgba(0,229,168,.18);border-color:#00e5a8}
+#playLink[hidden]{display:none}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<a id="playLink" href="https://mndw100.github.io/poop-wars/" target="_blank" rel="noopener">게임 바로가기 ↗</a>
 <script>
 "use strict";
 const MAP = 2400, T = 20, N = MAP / T, GAME_TIME = 180;
@@ -19,6 +23,7 @@ const TCOL = [null, PINK, MINT], TFILL = [null, 'rgba(255,77,141,.5)', 'rgba(0,2
 const MMCOL = [null, '#FF4D8D', '#00E5A8'];
 const GAP = 16, HEAD_R = 13, BASE_SPEED = 160, TURN = 4.5;
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const playLink = document.getElementById('playLink');
 let W = 0, H = 0;
 function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
 addEventListener('resize', resize); resize();
@@ -379,6 +384,7 @@ init();
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  playLink.hidden = screen === 'play';
   if (screen === 'play') { update(dt); render(); } else menuScreen(now);
   requestAnimationFrame(loop);
 }
