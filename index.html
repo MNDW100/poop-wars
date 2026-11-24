@@ -448,7 +448,7 @@ function drawSplash(now) {
   ctx.font = 'bold ' + Math.min(84, W / 6) + 'px system-ui'; ctx.shadowColor = PINK; ctx.shadowBlur = 30; ctx.fillStyle = '#fff'; ctx.fillText('푸프 워즈', 0, 10);
   ctx.shadowBlur = 0; ctx.font = 'bold 22px system-ui'; ctx.fillStyle = MINT; ctx.fillText('P O O P   W A R S', 0, 62);
   ctx.restore();
-  ctx.font = '15px system-ui'; ctx.fillStyle = '#b9b3d6'; ctx.fillText('핀크팀 vs 민트팀 · 4분 영역 점령전 · v1.0'.replace('4분', '3분'), W / 2, H * .62);
+  ctx.font = '15px system-ui'; ctx.fillStyle = '#b9b3d6'; ctx.fillText('핀크팀 vs 민트팀 · 4분 영역 점령전 · v2.0'.replace('4분', '3분'), W / 2, H * .62);
   ctx.globalAlpha = .55 + .45 * Math.sin(now / 350); ctx.font = 'bold 20px system-ui'; ctx.fillStyle = '#fff';
   ctx.fillText('▶ 화면을 클릭하면 시작', W / 2, H * .72); ctx.globalAlpha = 1;
 }
