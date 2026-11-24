@@ -7,14 +7,21 @@
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#12101c;font-family:system-ui,sans-serif}
 canvas{display:block;width:100%;height:100%;cursor:crosshair}
-#playLink{position:fixed;right:16px;bottom:16px;z-index:2;padding:10px 14px;border:1px solid rgba(0,229,168,.55);border-radius:999px;background:rgba(18,16,28,.82);color:#bffff0;font:600 13px system-ui,sans-serif;text-decoration:none;backdrop-filter:blur(8px)}
+#playLink{position:fixed;right:16px;bottom:16px;z-index:3;padding:10px 14px;border:1px solid rgba(0,229,168,.55);border-radius:999px;background:rgba(18,16,28,.82);color:#bffff0;font:600 13px system-ui,sans-serif;text-decoration:none;backdrop-filter:blur(8px)}
 #playLink:hover{background:rgba(0,229,168,.18);border-color:#00e5a8}
 #playLink[hidden]{display:none}
+#nm{display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:rgba(10,8,20,.55)}
+#nm .box{background:#221f3d;border:2px solid #FF4D8D;border-radius:16px;padding:26px 28px;text-align:center;color:#fff;width:min(340px,86vw);box-shadow:0 0 30px rgba(255,77,141,.4)}
+#nm h2{margin:0 0 14px;font-size:20px}
+#nm input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #5b5483;background:#12101c;color:#fff;font-size:17px;text-align:center;outline:none}
+#nm button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:10px;background:#FF4D8D;color:#fff;font-size:18px;font-weight:700;cursor:pointer}
+#nm p{margin:12px 0 0;font-size:12px;color:#b9b3d6}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <a id="playLink" href="https://mndw100.github.io/poop-wars/" target="_blank" rel="noopener">푸프 워즈</a>
+<div id="nm"><div class="box"><h2>💩 닉네임을 입력하세요</h2><input id="nmi" maxlength="12" placeholder="이름 (최대 12자)" autocomplete="off"><button id="nmb">확인</button><p>전체 랭킹에 이 이름으로 표시돼요</p></div></div>
 <script>
 "use strict";
 const MAP = 2400, T = 20, N = MAP / T, GAME_TIME = 180;
@@ -41,18 +48,21 @@ function resetGrid() {
   fctx.clearRect(0, 0, MAP, MAP); mctx.clearRect(0, 0, N, N);
 }
 function paintTile(x, y, team) {
-  if (x < 0 || y < 0 || x >= N || y >= N) return;
+  if (x < 0 || y < 0 || x >= N || y >= N) return 0;
   const prev = grid[x][y];
-  if (prev === team) return;
+  if (prev === team) return 0;
   grid[x][y] = team; counts[prev]--; counts[team]++;
   fctx.clearRect(x * T, y * T, T, T);
   fctx.fillStyle = TFILL[team]; fctx.fillRect(x * T, y * T, T, T);
   mctx.clearRect(x, y, 1, 1);
   mctx.fillStyle = MMCOL[team]; mctx.fillRect(x, y, 1, 1);
+  return 1;
 }
 function paintArea(px, py, team, r) { // (2r+1)x(2r+1) tiles
   const cx = Math.floor(px / T), cy = Math.floor(py / T);
-  for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) paintTile(cx + i, cy + j, team);
+  let n = 0;
+  for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) n += paintTile(cx + i, cy + j, team);
+  return n;
 }
 function tileAt(x, y) {
   const gx = Math.min(N - 1, Math.max(0, Math.floor(x / T))), gy = Math.min(N - 1, Math.max(0, Math.floor(y / T)));
@@ -64,7 +74,7 @@ const BASES = [null, { x: 300, y: 300 }, { x: 2100, y: 2100 }];
 class Entity {
   constructor(team, isBot, name) {
     this.team = team; this.isBot = isBot; this.name = name;
-    this.score = 0; this.respawn = 0; this.spawn();
+    this.score = 0; this.kills = 0; this.painted = 0; this.respawn = 0; this.spawn();
   }
   spawn() {
     const b = BASES[this.team];
@@ -114,7 +124,7 @@ class Entity {
     if (Math.hypot(this.x - p0.x, this.y - p0.y) >= 3) this.pathHistory.unshift({ x: this.x, y: this.y });
     this.rebuild();
     // painting: tail leaves a 1-tile trail, boost paints 3x3
-    const tl = this.tail(); paintArea(tl.x, tl.y, this.team, this.boosting ? 1 : 0);
+    const tl = this.tail(); this.painted += paintArea(tl.x, tl.y, this.team, this.boosting ? 1 : 0);
   }
   botAI(dt) {
     this.think -= dt;
@@ -150,13 +160,13 @@ function spawnFood() { foods.push(makeFood(40 + Math.random() * (MAP - 80), 40 +
 
 // ---------- State ----------
 let entities = [], player, timeLeft, over, winner;
-let selSkin = 'slime', screen = 'loading', loadP = 0; const loadStart = performance.now();
+let selSkin = 'slime', screen = 'loading', loadP = 0, endT = 0, endG = false, rankRows = [], res = {}; const loadStart = performance.now();
 const input = { x: 0, y: 0, wx: 0, wy: 0, down: false };
 const cam = { x: 0, y: 0 };
 function init() {
   resetGrid(); foods = []; for (let i = 0; i < 180; i++) spawnFood();
   entities = [];
-  player = new Entity(1, false, 'YOU'); entities.push(player);
+  player = new Entity(1, false, playerName || '플레이어'); entities.push(player);
   for (let i = 0; i < 4; i++) entities.push(new Entity(1, true, 'P' + i));
   for (let i = 0; i < 5; i++) entities.push(new Entity(2, true, 'M' + i));
   paintArea(BASES[1].x, BASES[1].y, 1, 5); paintArea(BASES[2].x, BASES[2].y, 2, 5);
@@ -165,13 +175,15 @@ function init() {
 }
 addEventListener('mousemove', e => { input.x = e.clientX; input.y = e.clientY; });
 addEventListener('mousedown', e => {
-  if (screen !== 'play') { if (screen === 'menu' && e.button === 0) menuClick(e.clientX, e.clientY); return; }
-  if (over && timeLeft <= 0 && e.button === 0) { screen = 'menu'; input.down = false; return; }
+  if (screen !== 'play') { if (e.button === 0) { if (screen === 'splash') showName(); else if (screen === 'menu') menuClick(e.clientX, e.clientY); else if (screen === 'global') screen = 'menu'; } return; }
+  if (over && e.button === 0) { if (endT > .8) { if (endT < 7) endT = 7; else if (!endG) endG = true; else { screen = 'menu'; input.down = false; } } return; }
   if (e.button === 0) input.down = true;
 });
 addEventListener('mouseup', e => { if (e.button === 0) input.down = false; });
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('keydown', e => {
+  if (screen === 'name') return;
+  if (screen === 'splash' && (e.code === 'Space' || e.code === 'Enter')) { e.preventDefault(); showName(); return; }
   if (e.code !== 'Space') return;
   e.preventDefault();
   if (screen !== 'play' || e.repeat || over || !player.alive) return;
@@ -180,9 +192,9 @@ addEventListener('keydown', e => {
 
 // ---------- Update ----------
 function update(dt) {
-  if (over) return;
+  if (over) { endT += dt; return; }
   timeLeft -= dt;
-  if (timeLeft <= 0) { timeLeft = 0; over = true; winner = counts[1] === counts[2] ? 0 : counts[1] > counts[2] ? 1 : 2; return; }
+  if (timeLeft <= 0) { timeLeft = 0; over = true; winner = counts[1] === counts[2] ? 0 : counts[1] > counts[2] ? 1 : 2; endT = 0; finishMatch(); return; }
   input.wx = input.x + cam.x; input.wy = input.y + cam.y;
   for (const e of entities) {
     if (!e.alive) { e.respawn -= dt; if (e.respawn <= 0) e.spawn(); continue; }
@@ -202,7 +214,7 @@ function update(dt) {
     for (const b of entities) {
       if (b.team === a.team || !b.alive) continue;
       if (Math.hypot(a.x - b.x, a.y - b.y) < HEAD_R * 2) { dead.add(a); dead.add(b); continue; }
-      for (const s of b.segments) if ((s.x - a.x) ** 2 + (s.y - a.y) ** 2 < (HEAD_R + 9) ** 2) { dead.add(a); break; }
+      for (const s of b.segments) if ((s.x - a.x) ** 2 + (s.y - a.y) ** 2 < (HEAD_R + 9) ** 2) { if (!dead.has(a)) b.kills++; dead.add(a); break; }
     }
   }
   dead.forEach(e => e.die());
@@ -291,13 +303,7 @@ function drawUI() {
   const k = ms / MAP;
   for (const e of entities) if (e.alive) { ctx.fillStyle = TCOL[e.team]; ctx.strokeStyle = '#fff'; ctx.lineWidth = e === player ? 2 : 0; ctx.beginPath(); ctx.arc(mx + e.x * k, my + e.y * k, e === player ? 4 : 2.5, 0, 6.2832); ctx.fill(); if (e === player) ctx.stroke(); }
   ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1; ctx.strokeRect(mx + cam.x * k, my + cam.y * k, Math.min(W, MAP) * k, Math.min(H, MAP) * k);
-  if (over) {
-    ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(0, 0, W, H);
-    ctx.textAlign = 'center'; ctx.font = 'bold 48px system-ui';
-    ctx.fillStyle = winner === 1 ? PINK : winner === 2 ? MINT : '#fff';
-    ctx.fillText(winner === 0 ? '무승부!' : (winner === 1 ? '핑크팀' : '민트팀') + ' 승리!', W / 2, H / 2 - 20);
-    ctx.fillStyle = '#fff'; ctx.font = '20px system-ui'; ctx.fillText('클릭하면 다시 시작', W / 2, H / 2 + 30);
-  }
+  if (over) drawEnd();
 }
 
 // ---------- Snowman skin ----------
@@ -318,6 +324,133 @@ function drawSnow(e) {
   ctx.moveTo(e.x + ca * (HEAD_R + 8), e.y + sa * (HEAD_R + 8));
   ctx.lineTo(e.x + ca * 6 - sa * 3, e.y + sa * 6 + ca * 3); ctx.lineTo(e.x + ca * 6 + sa * 3, e.y + sa * 6 - ca * 3); ctx.fill();
   if (e === player) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(e.x, e.y, HEAD_R + 4, 0, 6.2832); ctx.stroke(); }
+}
+
+// ---------- Records / End screens ----------
+// ---- Online ranking (shared db) + player name ----
+let db = null, uid = null, canWrite = false, globalRows = [], dbState = 'loading', playerName = '';
+(async () => {
+  setTimeout(() => { if (dbState === 'loading') dbState = 'off'; }, 10000);
+  try {
+    if (!window.claude) { dbState = 'off'; return; }
+    const u = await claude.use('user');
+    uid = u ? await u.id() : null;
+    canWrite = u ? (await u.can('data.write')) !== false : false;
+    db = await claude.use('db');
+    if (!db) { dbState = 'off'; return; }
+    db.collection('ranking').orderBy('best', 'desc').limit(10).onSnapshot(
+      snap => { globalRows = snap.docs.map(d => Object.assign({ id: d.id }, d.data())); dbState = 'ok'; },
+      () => { dbState = 'off'; });
+  } catch (e) { dbState = 'off'; }
+})();
+async function submitScore(pts, won) {
+  if (!db || !uid || !canWrite) { res.saved = 'no'; return; }
+  try {
+    const ref = db.doc('ranking/' + uid), s = await ref.get(), old = s.exists ? s.data() : null;
+    res.newBest = !old || pts > (old.best || 0);
+    await ref.set({ name: playerName, best: Math.max(pts, old ? (old.best || 0) : 0), games: (old ? (old.games || 0) : 0) + 1, wins: (old ? (old.wins || 0) : 0) + (won ? 1 : 0), updated: Date.now() });
+    res.saved = 'ok';
+  } catch (e) { res.saved = 'no'; }
+}
+const nm = document.getElementById('nm'), nmi = document.getElementById('nmi');
+function showName() { screen = 'name'; nm.style.display = 'flex'; nmi.value = playerName; setTimeout(() => nmi.focus(), 0); }
+function confirmName() { playerName = nmi.value.trim().slice(0, 12) || '플레이어'; nm.style.display = 'none'; screen = 'menu'; }
+document.getElementById('nmb').addEventListener('click', confirmName);
+nmi.addEventListener('keydown', e => { if (e.key === 'Enter') confirmName(); e.stopPropagation(); });
+function drawGlobal() {
+  const pw = Math.min(520, W - 24), rh = Math.max(22, Math.min(32, (H - 220) / 10)), ph = 110 + rh * 10 + 40, px = (W - pw) / 2, py = Math.max(8, (H - ph) / 2);
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(px, py, pw, ph); ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1; ctx.strokeRect(px, py, pw, ph);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = 'bold 24px system-ui'; ctx.fillText('🌐 전체 랭킹 TOP 10', W / 2, py + 28);
+  ctx.font = '12px system-ui'; ctx.fillStyle = '#9a94b8'; ctx.fillText('최고 점수 기준 · 이 게임에 등록한 모든 플레이어', W / 2, py + 52);
+  const msg = dbState === 'off' ? '온라인 랭킹을 사용할 수 없어요. 로그인한 상태에서 열어야 해요.' : dbState === 'loading' ? '불러오는 중...' : !globalRows.length ? '아직 등록된 기록이 없어요. 첫 번째 주인공이 되어 보세요!' : '';
+  if (msg) { ctx.font = '14px system-ui'; ctx.fillStyle = '#d8d3f0'; ctx.fillText(msg, W / 2, py + ph / 2); }
+  globalRows.forEach((r, i) => {
+    const y = py + 86 + i * rh, me = r.id === uid;
+    if (me) { ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(px + 4, y - rh / 2, pw - 8, rh); }
+    ctx.font = (me ? 'bold ' : '') + '14px system-ui'; ctx.textAlign = 'left'; ctx.fillStyle = me ? '#fff' : '#d8d3f0';
+    ctx.fillText((i + 1) + (i === 0 ? ' 🥇' : i === 1 ? ' 🥈' : i === 2 ? ' 🥉' : ''), px + 16, y);
+    ctx.fillText(String(r.name || '?').slice(0, 12) + (me ? ' (나)' : ''), px + 70, y);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#9a94b8'; ctx.fillText((r.wins || 0) + '승/' + (r.games || 0) + '전', px + pw * .78, y);
+    ctx.fillStyle = '#ffd23f'; ctx.fillText((r.best || 0) + '점', px + pw - 16, y);
+  });
+  ctx.textAlign = 'center'; ctx.font = '13px system-ui'; ctx.fillStyle = '#9a94b8'; ctx.fillText('클릭하면 돌아가기', W / 2, py + ph - 18);
+}
+const points = e => e.kills * 100 + e.score * 10 + e.painted;
+function finishMatch() {
+  rankRows = entities.slice().sort((a, b) => points(b) - points(a));
+  const pts = points(player), won = winner === player.team;
+  endG = false;
+  const pool = winner ? rankRows.filter(e => e.team === winner) : rankRows, mvp = pool[0];
+  const tt = rankRows.filter(e => e.team === mvp.team).reduce((s, e) => s + points(e), 0);
+  res = { rank: rankRows.indexOf(player) + 1, pts, won, newBest: false, saved: 'pending', mvp, share: Math.round(points(mvp) / Math.max(1, tt) * 100) };
+  submitScore(pts, won);
+}
+function drawEnd() {
+  const t = endT, tcol = winner === 1 ? PINK : winner === 2 ? MINT : '#fff', tname = winner === 1 ? '핑크팀' : '민트팀';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = t < 7 ? 'rgba(0,0,0,.65)' : 'rgba(10,8,20,.88)'; ctx.fillRect(0, 0, W, H);
+  if (t < 3) {
+    ctx.font = '22px system-ui'; ctx.fillStyle = '#fff'; ctx.fillText('⏱ 시간 종료!', W / 2, H / 2 - 60);
+    ctx.font = 'bold ' + Math.min(56, W / 9) + 'px system-ui'; ctx.fillStyle = tcol; ctx.shadowColor = tcol; ctx.shadowBlur = 24;
+    ctx.fillText(winner === 0 ? '무승부!' : tname + ' 승리!', W / 2, H / 2); ctx.shadowBlur = 0;
+  } else if (t < 7) {
+    const col = winner === 0 ? '#ffd23f' : tcol;
+    for (let i = 0; i < 70; i++) {
+      const sp = 80 + (i % 5) * 40, x = (i * 83 + Math.sin(t * 2 + i) * 30 + W) % W, y = ((t - 3) * sp + i * 57) % (H + 20);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(t * 3 + i); ctx.fillStyle = i % 3 ? col : '#fff'; ctx.fillRect(-4, -2, 8, 4); ctx.restore();
+    }
+    const mine = winner === player.team;
+    ctx.font = 'bold ' + Math.min(44, W / 11) + 'px system-ui'; ctx.fillStyle = '#fff'; ctx.shadowColor = col; ctx.shadowBlur = 20;
+    ctx.fillText(winner === 0 ? '🤝 무승부였어요!' : mine ? '🎉 승리를 축하합니다! 🎉' : '🎉 ' + tname + ' 우승 축하! 🎉', W / 2, H / 2 - 20); ctx.shadowBlur = 0;
+    ctx.font = '18px system-ui'; ctx.fillStyle = '#d8d3f0';
+    ctx.fillText(winner === 0 ? '다음 판에서 승부를 내봐요' : mine ? '당신의 팀이 영역을 가장 넓게 차지했어요!' : '아쉽지만 멋진 경기였어요. 다음엔 꼭 이겨봐요!', W / 2, H / 2 + 24);
+    ctx.font = '15px system-ui'; ctx.fillText('PINK ' + (counts[1] / (N * N) * 100).toFixed(1) + '%  vs  ' + (counts[2] / (N * N) * 100).toFixed(1) + '% MINT', W / 2, H / 2 + 58);
+    const mv = res.mvp;
+    ctx.font = 'bold 22px system-ui'; ctx.fillStyle = '#ffd23f'; ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 14;
+    ctx.fillText('👑 MVP  ' + (mv === player ? playerName + ' (나)' : mv.name), W / 2, H / 2 + 98); ctx.shadowBlur = 0;
+    ctx.font = '14px system-ui'; ctx.fillStyle = '#d8d3f0';
+    ctx.fillText('처치 ' + mv.kills + ' · 먹이 ' + mv.score + ' · 타일 ' + mv.painted + ' · 팀 기여도 ' + res.share + '%', W / 2, H / 2 + 126);
+    ctx.fillStyle = '#9a94b8'; ctx.fillText('클릭하면 랭킹 보기', W / 2, H / 2 + 156);
+  } else if (endG) { drawGlobal(); } else {
+    const pw = Math.min(580, W - 24), rh = Math.max(20, Math.min(30, (H - 230) / 10)), ph = 118 + rh * 10 + 56;
+    const px = (W - pw) / 2, py = Math.max(8, (H - ph) / 2);
+    ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(px, py, pw, ph);
+    ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1; ctx.strokeRect(px, py, pw, ph);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 24px system-ui'; ctx.fillText('🏆 이번 판 랭킹', W / 2, py + 26);
+    ctx.font = '12px system-ui'; ctx.fillStyle = '#9a94b8'; ctx.fillText('점수 = 처치×100 + 먹이×10 + 칠한 타일', W / 2, py + 50);
+    const cx = [px + 14, px + 50, px + pw * .58, px + pw * .7, px + pw * .82, px + pw - 14];
+    ctx.font = 'bold 12px system-ui'; ctx.fillStyle = '#b9b3d6';
+    ctx.textAlign = 'left'; ctx.fillText('순위', cx[0], py + 76); ctx.fillText('이름', cx[1] + 16, py + 76);
+    ctx.textAlign = 'right'; ctx.fillText('처치', cx[2], py + 76); ctx.fillText('먹이', cx[3], py + 76); ctx.fillText('타일', cx[4], py + 76); ctx.fillText('점수', cx[5], py + 76);
+    rankRows.forEach((e, i) => {
+      const y = py + 98 + i * rh, me = e === player;
+      if (me) { ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(px + 4, y - rh / 2, pw - 8, rh); }
+      ctx.font = (me ? 'bold ' : '') + '14px system-ui'; ctx.fillStyle = me ? '#fff' : '#d8d3f0';
+      ctx.textAlign = 'left'; ctx.fillText((i + 1) + (i === 0 ? ' 🥇' : i === 1 ? ' 🥈' : i === 2 ? ' 🥉' : ''), cx[0], y);
+      ctx.fillStyle = TCOL[e.team]; ctx.beginPath(); ctx.arc(cx[1] + 5, y, 5, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = me ? '#fff' : '#d8d3f0'; ctx.fillText((e === res.mvp ? '👑 ' : '') + (me ? playerName + ' (나)' : e.name), cx[1] + 16, y);
+      ctx.textAlign = 'right'; ctx.fillText(e.kills, cx[2], y); ctx.fillText(e.score, cx[3], y); ctx.fillText(e.painted, cx[4], y);
+      ctx.fillStyle = '#ffd23f'; ctx.fillText(points(e), cx[5], y);
+    });
+    const fy = py + 98 + rh * 10 + 6;
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = 'bold 15px system-ui';
+    ctx.fillText('내 순위 ' + res.rank + '위 · ' + res.pts + '점' + (res.newBest ? '  🌟 신기록!' : ''), W / 2, fy);
+    ctx.font = '12px system-ui'; ctx.fillStyle = '#9a94b8';
+    ctx.fillText(res.saved === 'ok' ? '✅ 온라인 랭킹에 등록됐어요 · 클릭하면 전체 랭킹' : res.saved === 'no' ? '⚠ 온라인 등록 불가(로그인·쓰기 권한 필요) · 클릭하면 전체 랭킹' : '등록 중... · 클릭하면 전체 랭킹', W / 2, fy + 22);
+  }
+}
+function drawSplash(now) {
+  menuBg(now);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.save(); ctx.translate(W / 2, H * .36); const sc = 1 + Math.sin(now / 400) * .03; ctx.scale(sc, sc);
+  ctx.font = '90px serif'; ctx.fillText('💩', 0, -70);
+  ctx.font = 'bold ' + Math.min(84, W / 6) + 'px system-ui'; ctx.shadowColor = PINK; ctx.shadowBlur = 30; ctx.fillStyle = '#fff'; ctx.fillText('푸프 워즈', 0, 10);
+  ctx.shadowBlur = 0; ctx.font = 'bold 22px system-ui'; ctx.fillStyle = MINT; ctx.fillText('P O O P   W A R S', 0, 62);
+  ctx.restore();
+  ctx.font = '15px system-ui'; ctx.fillStyle = '#b9b3d6'; ctx.fillText('핀크팀 vs 민트팀 · 4분 영역 점령전 · v1.0'.replace('4분', '3분'), W / 2, H * .62);
+  ctx.globalAlpha = .55 + .45 * Math.sin(now / 350); ctx.font = 'bold 20px system-ui'; ctx.fillStyle = '#fff';
+  ctx.fillText('▶ 화면을 클릭하면 시작', W / 2, H * .72); ctx.globalAlpha = 1;
 }
 
 // ---------- Loading / Menu screens ----------
@@ -360,6 +493,9 @@ function drawMenu(now) {
   ctx.shadowColor = PINK; ctx.shadowBlur = 18; ctx.fillStyle = PINK; ctx.fillRect(bx, by, bw, bh); ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui'; ctx.fillText('게임 시작', W / 2, by + bh / 2);
   ctx.fillStyle = '#b9b3d6'; ctx.font = '14px system-ui'; ctx.fillText('마우스: 이동 · 좌클릭: 부스터 · 스페이스: 길이 절반', W / 2, by + bh + 32);
+  ctx.fillStyle = '#fff'; ctx.font = '15px system-ui'; const ny = by + bh + 62;
+  ctx.fillText('👤 ' + playerName + '  (클릭: 이름 변경)', W / 2, ny); MR.nameR = { x: W / 2 - 140, y: ny - 14, w: 280, h: 28 };
+  ctx.fillStyle = '#ffd23f'; ctx.fillText('🌐 전체 랭킹 보기', W / 2, ny + 34); MR.rankR = { x: W / 2 - 100, y: ny + 20, w: 200, h: 28 };
 }
 function drawLoading(now) {
   menuBg(now); menuTitle(H * .3);
@@ -370,12 +506,17 @@ function drawLoading(now) {
   ctx.fillStyle = '#b9b3d6'; ctx.font = '14px system-ui'; ctx.fillText('TIP · ' + TIPS[Math.floor(loadP * TIPS.length * .999)], W / 2, by + 72);
 }
 function menuScreen(now) {
-  if (screen === 'loading') { loadP = Math.min(1, (now - loadStart) / 2000); drawLoading(now); if (loadP >= 1) screen = 'menu'; }
+  if (screen === 'loading') { loadP = Math.min(1, (now - loadStart) / 2000); drawLoading(now); if (loadP >= 1) screen = 'splash'; }
+  else if (screen === 'name') { menuBg(now); menuTitle(Math.max(60, H * .16)); }
+  else if (screen === 'global') { menuBg(now); drawGlobal(); }
+  else if (screen === 'splash') drawSplash(now);
   else drawMenu(now);
 }
 const hit = (r, x, y) => r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 function menuClick(x, y) {
   for (const c of MR.cards) if (hit(c, x, y)) { selSkin = c.id; return; }
+  if (hit(MR.nameR, x, y)) { showName(); return; }
+  if (hit(MR.rankR, x, y)) { screen = 'global'; return; }
   if (hit(MR.start, x, y)) { init(); input.down = false; screen = 'play'; }
 }
 
