@@ -183,7 +183,7 @@ function spawnFood() { foods.push(makeFood(40 + Math.random() * (MAP - 80), 40 +
 // ---------- State ----------
 let entities = [], player, timeLeft, over, winner;
 const CLASSIC_CFG = { time: 180, respawn: 7, speed: 205, turn: 4.5, boostR: 1, foods: 180, team: 5 };
-const CHAOS_CFG = { time: 120, respawn: 2.5, speed: 330, turn: 5.5, boostR: 2, foods: 300, team: 10 };
+const CHAOS_CFG = { time: 120, respawn: 2.5, speed: 330, turn: 5.5, boostR: 2, foods: 300, team: 5 };
 let CFG = CLASSIC_CFG, gameMode = 'classic', banner = { t: 0, text: '', color: '#fff' };
 let selSkin = 'slime', screen = 'logo', loadP = 0, endT = 0, endG = false, rankRows = [], res = {}; let loadStart = 0; const logoStart = performance.now();
 const input = { x: 0, y: 0, wx: 0, wy: 0, down: false };
@@ -902,7 +902,7 @@ function sysDrawEntity(e) {
 function sysDrawHUD() {
   if (gameMode !== 'chaos' || !player) return;
   ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-  ctx.font = 'bold 14px system-ui'; ctx.fillStyle = '#d9a8ff'; ctx.fillText('⚡ CHAOS · 10 vs 10', 14, 18);
+  ctx.font = 'bold 14px system-ui'; ctx.fillStyle = '#d9a8ff'; ctx.fillText('⚡ CHAOS · 5 vs 5', 14, 18);
   if (banner.t > 0) { ctx.globalAlpha = Math.min(1, banner.t); ctx.textAlign = 'center'; ctx.font = 'bold 20px system-ui'; ctx.fillStyle = banner.color; ctx.fillText(banner.text, W / 2, H * .22); ctx.globalAlpha = 1; ctx.textAlign = 'left'; }
   const gx = 20, a = player.active, sy = H - 164, fy = H - 124;
   ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(gx, sy, 260, 28); ctx.fillStyle = player.shockCd > 0 ? 'rgba(255,255,255,.2)' : 'rgba(255,77,141,.7)'; ctx.fillRect(gx, sy, 260 * (1 - player.shockCd / 3), 28);
